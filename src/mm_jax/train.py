@@ -5,6 +5,8 @@ linear warmup then cosine decay. Each batch is split into micro-batches whose gr
 averaged (the reference splits it across GPUs)."""
 
 import math
+import os
+import pickle
 from functools import partial
 
 import jax
@@ -31,8 +33,7 @@ def make_trainer(model, model_cfg, cfg):
     def init_state(key):
         params = model.init(key, model_cfg)
         zeros = lambda: jax.tree.map(jnp.zeros_like, params)
-        return {"params": params, "mu": zeros(), "nu": zeros(), "step": jnp.zeros((), jnp.int32),
-                "key": jax.random.fold_in(key, 1)}
+        return {"params": params, "mu": zeros(), "nu": zeros(), "step": jnp.zeros((), jnp.int32)}
 
     @partial(jax.jit, donate_argnums=0)
     def train_step(state, batch, lr):
@@ -41,7 +42,7 @@ def make_trainer(model, model_cfg, cfg):
             return jax.tree.map(jnp.add, grads, g), loss
 
         micro = jax.tree.map(lambda a: a.reshape(n_micro, -1, a.shape[-1]), batch)
-        keys = jax.random.split(jax.random.fold_in(state["key"], state["step"]), n_micro)
+        keys = jax.random.split(jax.random.fold_in(jax.random.key(1), state["step"]), n_micro)  # dropout
         grads, losses = jax.lax.scan(accumulate, jax.tree.map(jnp.zeros_like, state["params"]), (micro, keys))
         norm = jnp.sqrt(sum(jnp.sum(g * g) for g in jax.tree.leaves(grads))) / n_micro
         grads = jax.tree.map(lambda g: g / n_micro * jnp.minimum(1, cfg.grad_clip / (norm + 1e-6)), grads)
@@ -58,3 +59,15 @@ def make_trainer(model, model_cfg, cfg):
 
     eval_step = jax.jit(lambda params, batch: loss_fn(params, batch, None))
     return init_state, train_step, eval_step
+
+
+def save(path, tree):
+    """Atomically pickles a pytree (e.g. the train state and loss log) to path."""
+    with open(path + ".tmp", "wb") as f:
+        pickle.dump(jax.device_get(tree), f)
+    os.replace(path + ".tmp", path)
+
+
+def load(path):
+    with open(path, "rb") as f:
+        return pickle.load(f)

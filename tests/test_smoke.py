@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tempfile
 
 import jax
 import jax.numpy as jnp
@@ -44,6 +45,23 @@ def test_grad_accumulation_matches_full_batch():
                 state, _ = train_step(state, batch, 1e-3)
             results.append(jax.tree.leaves(state["params"]))
         assert all(jnp.allclose(a, b, atol=1e-5) for a, b in zip(*results))
+
+
+def test_checkpoint_resume_is_exact():
+    mod, cfg = MODELS[1]
+    init_state, train_step, _ = train.make_trainer(mod, cfg, CFG)
+    data = [next(batches(IDS, 8, T, seed)) for seed in range(4)]
+    path = os.path.join(tempfile.gettempdir(), "mm_jax_test.pkl")
+    a, b = init_state(jax.random.key(0)), init_state(jax.random.key(0))
+    for batch in data:
+        a, _ = train_step(a, batch, 1e-3)
+    for i, batch in enumerate(data):
+        if i == 2:  # interrupt b halfway, through a checkpoint
+            train.save(path, b)
+            b = jax.device_put(train.load(path))
+        b, _ = train_step(b, batch, 1e-3)
+    assert all(np.array_equal(x, y) for x, y in zip(jax.tree.leaves(a), jax.tree.leaves(b)))
+    assert train_step._cache_size() == 1
 
 
 def test_no_future_leak():
