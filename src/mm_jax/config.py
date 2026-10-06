@@ -32,4 +32,4 @@ class TrainConfig:
     beta2: float = 0.95
     grad_clip: float = 1.0
     eval_every: int = 2000
-    eval_batches: int = 40  # x micro_batch_size = 640 sequences, as in the reference
+    eval_batches: int = 320  # x micro_batch_size = 5,120 sequences: the reference's 10 batches of 8 on each of 64 GPUs
