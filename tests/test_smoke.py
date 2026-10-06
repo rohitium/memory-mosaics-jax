@@ -9,6 +9,7 @@ import sys
 import jax
 import jax.numpy as jnp
 import numpy as np
+import optax
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -48,9 +49,10 @@ def test_loss_decreases():
             mod.apply, mod.init(jax.random.PRNGKey(1), cfg), cfg, t_cfg)
         before = train.eval_loss(eval_step, state["params"], TextBatcher(ids, 9), t_cfg, T)
         batcher, key = TextBatcher(ids), jax.random.PRNGKey(2)
-        for _ in range(t_cfg.max_steps):
+        for step in range(t_cfg.max_steps):
             key, k = jax.random.split(key)
-            state, _ = train_step(state, batcher.next_batch(t_cfg.batch_size, T), k)
+            lr = train.learning_rate(step, t_cfg)
+            state, _ = train_step(state, batcher.next_batch(t_cfg.batch_size, T), k, lr)
         after = train.eval_loss(eval_step, state["params"], TextBatcher(ids, 9), t_cfg, T)
         assert after < before, f"{name}: {before:.3f} -> {after:.3f}"
         print(f"  {name}: loss {before:.3f} -> {after:.3f}")
@@ -65,11 +67,32 @@ def test_grad_accumulation_matches_full_batch():
         for micro in (8, 2):
             t_cfg = TrainConfig(**{**TINY_TRAIN, "micro_batch_size": micro})
             train_step, _, state = train.make_trainer(mod.apply, params, cfg, t_cfg)
-            for _ in range(3):
-                state, loss = train_step(state, batch, jax.random.PRNGKey(0))
+            for step in range(3):
+                state, loss = train_step(state, batch, jax.random.PRNGKey(0), train.learning_rate(step, t_cfg))
             results.append(state["params"])
         for a, b in zip(*map(jax.tree_util.tree_leaves, results)):
             assert jnp.allclose(a, b, atol=1e-5), name
+
+
+def test_train_step_compiles_once():
+    """Parameters must keep their exact types across steps (e.g. no weak-typed
+    initial arrays), and the learning rate is an argument, so one compile serves
+    the whole run."""
+    batch = TextBatcher(random_ids(256, 7)).next_batch(8, T)
+    for name, mod, cfg in MODELS:
+        train_step, _, state = train.make_trainer(mod.apply, mod.init(jax.random.PRNGKey(7), cfg), cfg,
+                                                  TrainConfig(**TINY_TRAIN))
+        for step in range(3):
+            state, _ = train_step(state, batch, jax.random.PRNGKey(step), 1e-3 * step)
+        assert train_step._cache_size() == 1, name
+
+
+def test_learning_rate_matches_optax_schedule():
+    t_cfg = TrainConfig(**TINY_TRAIN)
+    schedule = optax.warmup_cosine_decay_schedule(0.0, t_cfg.learning_rate, t_cfg.warmup_steps,
+                                                  t_cfg.max_steps, t_cfg.min_lr)
+    for step in range(t_cfg.max_steps + 5):
+        assert np.isclose(train.learning_rate(step, t_cfg), schedule(step), rtol=1e-5), step
 
 
 def test_no_future_leak():

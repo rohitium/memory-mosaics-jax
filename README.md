@@ -101,6 +101,8 @@ These run on tiny configs with random tokens, on CPU in under a minute:
 | `shapes_and_finite_grads` | logits are `(B, T, V)`, loss is a scalar, all gradients are finite (with dropout) |
 | `loss_decreases` | `make_trainer` + `eval_loss` lower the loss on a memorizable sequence |
 | `grad_accumulation_matches_full_batch` | micro-batching gives the same parameters as one full-batch step |
+| `train_step_compiles_once` | the training step compiles once for a whole run, whatever the learning rate |
+| `learning_rate_matches_optax_schedule` | warmup + cosine schedule equals `optax.warmup_cosine_decay_schedule` |
 | `no_future_leak` | changing token `p` leaves logits before `p` unchanged; for the Mosaic this guards the strict mask |
 | `context_mem_first_position_is_zero` | ContextMem returns 0 at position 0 (no past), as in the reference |
 | `leaky_avg_matches_recurrence` | the leaky average equals `k̄_t = k_t + e^{-β}·k̄_{t-1}` |

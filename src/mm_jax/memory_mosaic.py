@@ -78,7 +78,7 @@ def persistent_mem_init(key, cfg: MosaicConfig, proj_std):
         "k_feat": key_featurizer_init(k1, cfg),
         "P_k": normal(k2, bank_shape, hs ** -0.5),
         "P_v": normal(k3, bank_shape, hs ** -0.5),
-        "out_scale": jnp.full((nh,), -0.05),
+        "out_scale": jnp.full((nh,), -0.05, jnp.float32),
         "c_proj": normal(k4, (cfg.n_embd, cfg.n_embd), proj_std),
     }
 
@@ -172,7 +172,7 @@ def key_featurizer_init(key, cfg: MosaicConfig):
     return {
         "W_k": normal(key, (cfg.n_embd, cfg.n_embd), cfg.n_embd ** -0.5),
         "beta_raw": jnp.linspace(0.5, 5.0, cfg.n_head) / 10.0,
-        "key_scale": jnp.full((cfg.n_head,), 0.1),
+        "key_scale": jnp.full((cfg.n_head,), 0.1, jnp.float32),
     }
 
 
@@ -192,7 +192,7 @@ def val_featurizer_init(key, cfg: MosaicConfig):
     return {
         "W_v": normal(k1, (cfg.n_embd, cfg.n_embd), cfg.n_embd ** -0.5),
         "coef": jax.random.uniform(k2, (cfg.n_head,)),
-        "val_scale": jnp.full((cfg.n_head,), -0.05),
+        "val_scale": jnp.full((cfg.n_head,), -0.05, jnp.float32),
     }
 
 
