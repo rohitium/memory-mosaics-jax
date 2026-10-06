@@ -25,7 +25,7 @@ python tests/test_smoke.py
 
 Then open
 [`notebooks/memory_mosaics_colab.ipynb`](notebooks/memory_mosaics_colab.ipynb)
-in Colab on a T4 GPU and run it top to bottom (about 15 minutes). It downloads
+in Colab on a v5e-1 TPU or T4 GPU and run it top to bottom (about 15 minutes). It downloads
 BabiStories, trains both 1-block models, and plots training and validation
 loss. See [Quick run vs. paper run](#quick-run-vs-paper-run) for what that plot
 can and can't show.
@@ -111,7 +111,7 @@ The notebook's default **quick run** keeps the paper's model, data, optimizer an
 dropout but uses batches of 32 sequences instead of 512, and sizes the schedule
 to a 10-minute training budget: it times a few steps on the GPU it gets, then
 picks the step count (warmup is 5% of it, and the cosine decay spans the whole
-run). On a T4 that is roughly 5–10M tokens per model.
+run). On a T4 that is roughly 5–10M tokens per model; a TPU gets several times more.
 
 That is the very start of training. The paper's Fig. 7 starts at its first
 evaluation, after 2,000 iterations of 512 sequences (about 1B tokens, two passes
