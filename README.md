@@ -39,7 +39,7 @@ many steps that fit within 8 minutes. That covers the start of training, while t
 early trends, not Fig. 7's precise values. `PAPER_RUN = True` runs the full recipe (21B tokens per model), checkpointing at every
 evaluation; rerunning the notebook resumes from the last checkpoint.
 
-Quick run on a Colab v6e-1 TPU (4,004 steps, 66M tokens per model):
+Quick run on a Colab v6e-1 TPU (4,015 steps, 66M tokens per model):
 
 ![1-block loss curves](notebooks/fig7_1block.png)
 
