@@ -36,3 +36,7 @@ TPU or GPU (fastest: v6e-1 TPU): sanity checks, then the paper's model, data and
 many steps as fit 8 minutes. That covers the start of training, while the paper's curves begin after ~1B tokens, so it shows
 early trends, not Fig. 7's values. `PAPER_RUN = True` runs the full recipe (21B tokens per model), checkpointing to Google Drive at every
 evaluation; rerunning the notebook resumes from the last checkpoint.
+
+Quick run on a Colab v6e-1 TPU (4,004 steps, 66M tokens per model):
+
+![1-block loss curves](notebooks/fig7_1block.png)
