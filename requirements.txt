@@ -1,3 +1,4 @@
 jax
-optax
-# data preparation: tiktoken py7zr multivolumefile; notebook plot: matplotlib
+tiktoken
+py7zr
+multivolumefile

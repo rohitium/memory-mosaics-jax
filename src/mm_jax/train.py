@@ -1,77 +1,60 @@
-"""Training harness shared by both models, matching the reference trainer
-(Library/train_memory_mosaics.py, train_baselines.py): AdamW with linear warmup
-and cosine decay to min_lr, global-norm gradient clipping, weight decay on
->=2-D tensors only. The batch is split into micro-batches whose gradients are
-averaged, which equals one full-batch step (the reference spreads it over GPUs).
-"""
+"""Training shared by both models, in the style of the JAX training cookbook
+(https://docs.jax.dev/en/latest/the-training-cookbook.html), with the reference trainer's recipe:
+AdamW as torch.optim.AdamW, global-norm gradient clipping, weight decay on >=2-D tensors, and
+linear warmup then cosine decay. Each batch is split into micro-batches whose gradients are
+averaged (the reference splits it across GPUs)."""
 
 import math
+from functools import partial
 
 import jax
 import jax.numpy as jnp
-import numpy as np
-import optax
 
 
-def learning_rate(step, train_cfg):
-    """Learning rate for the step-th update (0-based), as the reference get_cosine_lr:
-    linear warmup from 0, then cosine decay to min_lr at max_steps."""
-    lr, min_lr = train_cfg.learning_rate, train_cfg.min_lr
-    if step < train_cfg.warmup_steps:
-        return lr * step / train_cfg.warmup_steps
-    if step >= train_cfg.max_steps:
-        return min_lr
-    progress = (step - train_cfg.warmup_steps) / (train_cfg.max_steps - train_cfg.warmup_steps)
-    return min_lr + 0.5 * (1.0 + math.cos(math.pi * progress)) * (lr - min_lr)
+def learning_rate(step, cfg):
+    """Plain Python, so it never interrupts the accelerator; as the reference get_cosine_lr."""
+    if step < cfg.warmup_steps:
+        return cfg.learning_rate * step / cfg.warmup_steps
+    progress = min(1, (step - cfg.warmup_steps) / (cfg.max_steps - cfg.warmup_steps))
+    return cfg.min_lr + 0.5 * (1 + math.cos(math.pi * progress)) * (cfg.learning_rate - cfg.min_lr)
 
 
-def make_trainer(model_apply, params, model_cfg, train_cfg):
-    """Returns (train_step, eval_step, state):
-        train_step(state, batch, key, lr) -> (state, mean loss)   batch: (batch_size, T) arrays
-        eval_step(params, batch) -> loss                          dropout off
-    The learning rate is an argument (see learning_rate), so changing the
-    schedule doesn't recompile the step.
-    """
-    tx = optax.chain(  # AdamW without the learning-rate step, which train_step applies
-        optax.clip_by_global_norm(train_cfg.grad_clip),
-        optax.scale_by_adam(b1=train_cfg.beta1, b2=train_cfg.beta2),
-        optax.add_decayed_weights(train_cfg.weight_decay,
-                                  # no decay on norms or learned scales
-                                  mask=jax.tree_util.tree_map(lambda p: p.ndim >= 2, params)),
-    )
-    n_micro = train_cfg.batch_size // train_cfg.micro_batch_size
-    assert n_micro * train_cfg.micro_batch_size == train_cfg.batch_size
+def make_trainer(model, model_cfg, cfg):
+    """Returns init_state(key), train_step(state, batch, lr) -> (state, loss) and
+    eval_step(params, batch) -> loss (no dropout). train_step reuses the state's buffers."""
+    n_micro = cfg.batch_size // cfg.micro_batch_size
 
     def loss_fn(params, batch, key):
-        idx, targets = batch
-        return model_apply(params, idx, model_cfg, targets, key)[1]
+        return model.apply(params, batch[0], model_cfg, batch[1], key)[1]
 
     @jax.jit
-    def train_step(state, batch, key, lr):
-        micro_batches = jax.tree_util.tree_map(
-            lambda a: a.reshape(n_micro, train_cfg.micro_batch_size, -1), batch)
+    def init_state(key):
+        params = model.init(key, model_cfg)
+        zeros = lambda: jax.tree.map(jnp.zeros_like, params)
+        return {"params": params, "mu": zeros(), "nu": zeros(), "step": jnp.zeros((), jnp.int32),
+                "key": jax.random.fold_in(key, 1)}
 
-        def accumulate(grad_sum, xs):
-            loss, grads = jax.value_and_grad(loss_fn)(state["params"], *xs)
-            return jax.tree_util.tree_map(jnp.add, grad_sum, grads), loss
+    @partial(jax.jit, donate_argnums=0)
+    def train_step(state, batch, lr):
+        def accumulate(grads, xs):
+            loss, g = jax.value_and_grad(loss_fn)(state["params"], *xs)
+            return jax.tree.map(jnp.add, grads, g), loss
 
-        zeros = jax.tree_util.tree_map(jnp.zeros_like, state["params"])
-        grad_sum, losses = jax.lax.scan(accumulate, zeros,
-                                        (micro_batches, jax.random.split(key, n_micro)))
-        grads = jax.tree_util.tree_map(lambda g: g / n_micro, grad_sum)
-        updates, opt_state = tx.update(grads, state["opt_state"], state["params"])
-        params = jax.tree_util.tree_map(lambda p, u: p - lr * u, state["params"], updates)
-        return {"params": params, "opt_state": opt_state}, losses.mean()
+        micro = jax.tree.map(lambda a: a.reshape(n_micro, -1, a.shape[-1]), batch)
+        keys = jax.random.split(jax.random.fold_in(state["key"], state["step"]), n_micro)
+        grads, losses = jax.lax.scan(accumulate, jax.tree.map(jnp.zeros_like, state["params"]), (micro, keys))
+        norm = jnp.sqrt(sum(jnp.sum(g * g) for g in jax.tree.leaves(grads))) / n_micro
+        grads = jax.tree.map(lambda g: g / n_micro * jnp.minimum(1, cfg.grad_clip / (norm + 1e-6)), grads)
+        step = state["step"] + 1
+        mu = jax.tree.map(lambda m, g: cfg.beta1 * m + (1 - cfg.beta1) * g, state["mu"], grads)
+        nu = jax.tree.map(lambda v, g: cfg.beta2 * v + (1 - cfg.beta2) * g * g, state["nu"], grads)
 
-    @jax.jit
-    def eval_step(params, batch):
-        return loss_fn(params, batch, None)
+        def update(p, m, v):
+            adam = m / (1 - cfg.beta1 ** step) / (jnp.sqrt(v / (1 - cfg.beta2 ** step)) + 1e-8)
+            return p - lr * (adam + (cfg.weight_decay if p.ndim >= 2 else 0) * p)
 
-    return train_step, eval_step, {"params": params, "opt_state": tx.init(params)}
+        params = jax.tree.map(update, state["params"], mu, nu)
+        return {**state, "params": params, "mu": mu, "nu": nu, "step": step}, losses.mean()
 
-
-def eval_loss(eval_step, params, batcher, train_cfg, seq_len):
-    """Mean loss over eval_batches micro-batches."""
-    batches = (batcher.next_batch(train_cfg.micro_batch_size, seq_len)
-               for _ in range(train_cfg.eval_batches))
-    return float(np.mean([eval_step(params, b) for b in batches]))
+    eval_step = jax.jit(lambda params, batch: loss_fn(params, batch, None))
+    return init_state, train_step, eval_step
