@@ -10,15 +10,14 @@ import numpy as np
 URL = "https://github.com/facebookresearch/MemoryMosaics/raw/main/BabiStories/data/babistories-dataset.7z.{:03d}"
 
 
-def prepare_babistories(data_dir, max_train_tokens=None):
-    """Downloads and tokenizes BabiStories into uint16 token files; returns their paths.
-    max_train_tokens stops the training split early (at a 10k-story boundary)."""
+def prepare_babistories(data_dir):
+    """Downloads and tokenizes BabiStories into uint16 token files; returns their paths."""
     import multivolumefile
     import py7zr
     import tiktoken
 
     os.makedirs(data_dir, exist_ok=True)
-    bins = {"train": f"{data_dir}/train{max_train_tokens or ''}.bin", "val": f"{data_dir}/val.bin"}
+    bins = {split: f"{data_dir}/{split}.bin" for split in ("train", "val")}
     if all(map(os.path.exists, bins.values())):
         return bins
     archive = f"{data_dir}/babistories-dataset.7z"
@@ -27,15 +26,12 @@ def prepare_babistories(data_dir, max_train_tokens=None):
     with multivolumefile.open(archive, "rb") as f, py7zr.SevenZipFile(f) as z:
         z.extractall(data_dir)
     enc = tiktoken.get_encoding("gpt2")
-    for split, limit in ("val", None), ("train", max_train_tokens):
-        n = 0
-        with open(f"{data_dir}/{split}dataset.txt") as f, open(bins[split] + ".tmp", "wb") as out:
-            while (limit is None or n < limit) and (lines := list(itertools.islice(f, 10_000))):
+    for split, path in bins.items():
+        with open(f"{data_dir}/{split}dataset.txt") as f, open(path + ".tmp", "wb") as out:
+            while lines := list(itertools.islice(f, 10_000)):
                 stories = enc.encode_ordinary_batch([json.loads(line) for line in lines])
-                ids = np.concatenate([np.array(s + [enc.eot_token], np.uint16) for s in stories])
-                ids.tofile(out)
-                n += len(ids)
-        os.rename(bins[split] + ".tmp", bins[split])
+                np.concatenate([np.array(s + [enc.eot_token], np.uint16) for s in stories]).tofile(out)
+        os.rename(path + ".tmp", path)
     return bins
 
 

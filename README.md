@@ -32,6 +32,6 @@ python tests/test_smoke.py
 ```
 
 [`notebooks/memory_mosaics_colab.ipynb`](notebooks/memory_mosaics_colab.ipynb) runs in ~15 min on a Colab
-v5e TPU or T4 GPU: the paper's model, data and optimizer, with batch 32 and as many steps as fit 10
-minutes. That covers the start of training, while the paper's curves begin after ~1B tokens, so it shows
+TPU or GPU (fastest: v6e-1 TPU): sanity checks, then the paper's model, data and optimizer, with batch 32 and as
+many steps as fit 8 minutes. That covers the start of training, while the paper's curves begin after ~1B tokens, so it shows
 early trends, not Fig. 7's values. `PAPER_RUN = True` runs the full recipe (21B tokens per model).
