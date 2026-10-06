@@ -1,31 +1,30 @@
-"""Raw jax.numpy layers: parameters are plain dicts, layers are pure functions."""
+"""Raw jax.numpy building blocks: parameters are plain arrays in dicts, layers are pure functions."""
 
 import jax
 import jax.numpy as jnp
 
 
-def linear_init(key, in_dim, out_dim, std=0.02, use_bias=True):
-    params = {"w": jax.random.normal(key, (in_dim, out_dim)) * std}
-    if use_bias:
-        params["b"] = jnp.zeros((out_dim,))
-    return params
+def normal(key, shape, std):
+    return std * jax.random.normal(key, shape)
 
 
-def linear_apply(params, x):
-    y = x @ params["w"]
-    if "b" in params:
-        y = y + params["b"]
-    return y
+def split_key(key, n):
+    """jax.random.split that passes key=None (dropout off) through."""
+    return [None] * n if key is None else list(jax.random.split(key, n))
 
 
-def layer_norm_init(dim):
-    return {"weight": jnp.ones((dim,)), "bias": jnp.zeros((dim,))}
+def dropout(x, rate, key):
+    if key is None or rate == 0.0:
+        return x
+    keep = jax.random.bernoulli(key, 1.0 - rate, x.shape)
+    return jnp.where(keep, x / (1.0 - rate), 0.0)
 
 
-def layer_norm_apply(params, x, eps=1e-5):
+def layer_norm(x, weight, eps=1e-5):
+    """LayerNorm without bias, as in the reference (bias=False)."""
     mean = jnp.mean(x, axis=-1, keepdims=True)
     var = jnp.var(x, axis=-1, keepdims=True)
-    return (x - mean) / jnp.sqrt(var + eps) * params["weight"] + params["bias"]
+    return (x - mean) / jnp.sqrt(var + eps) * weight
 
 
 def gelu(x):
